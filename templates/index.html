@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SENTINEL // Geological Survey</title>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Roboto+Mono:wght@500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+
+    <style>
+        :root {
+            --bg-overlay: rgba(255, 255, 255, 0.4); 
+            --card-bg: #ffffff;
+            --text-main: #0f172a;
+            --text-sub: #64748b;
+            
+            --col-temp: #0284c7; --col-humid: #6366f1; --col-rain: #2563eb;
+            --col-vib: #d97706; --col-risk: #dc2626; --col-safe: #16a34a;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-image: url('https://images.unsplash.com/photo-1454496522488-7a8e488e8606?q=80&w=2076&auto=format&fit=crop');
+            background-size: cover; background-position: center; background-attachment: fixed;
+            color: var(--text-main); margin: 0; padding: 0; min-height: 100vh;
+        }
+
+        .container { max-width: 1600px; margin: 0 auto; padding: 25px; }
+
+        /* HEADER */
+        header {
+            background: #fff; padding: 15px 30px; border-radius: 12px;
+            display: flex; justify-content: space-between; align-items: center;
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); margin-bottom: 25px;
+            border-bottom: 4px solid var(--col-rain);
+        }
+        h1 { margin: 0; font-size: 1.4rem; font-weight: 800; display: flex; gap: 10px; align-items: center; }
+
+        /* MAP SECTION */
+        .map-section {
+            background: #fff; padding: 10px; border-radius: 12px;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); margin-bottom: 25px;
+            border: 1px solid #e2e8f0; position: relative;
+        }
+        #map { height: 500px; width: 100%; border-radius: 8px; z-index: 1; cursor: crosshair; }
+
+        /* SENSOR DASHBOARD */
+        #sensor-dashboard {
+            display: none; opacity: 0; transition: opacity 0.5s ease-in-out;
+            padding-bottom: 50px;
+        }
+        #sensor-dashboard.active { display: block; opacity: 1; animation: slideUp 0.5s ease-out; }
+        @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+        /* KPI GRID */
+        .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-bottom: 25px; }
+        .kpi-card { background: #fff; padding: 15px 20px; border-radius: 10px; border-bottom: 4px solid #ddd; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .kpi-label { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; color: var(--text-sub); margin-bottom: 5px; }
+        .kpi-value { font-family: 'Roboto Mono', monospace; font-size: 1.8rem; font-weight: 700; }
+
+        /* CHARTS GRID */
+        .charts-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+        @media (max-width: 1200px) { .charts-grid { grid-template-columns: 1fr 1fr; } }
+        @media (max-width: 800px) { .charts-grid { grid-template-columns: 1fr; } }
+
+        .panel { background: #fff; border-radius: 12px; padding: 15px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
+        .panel-header { font-weight: 700; font-size: 0.9rem; margin-bottom: 10px; border-bottom: 1px solid #f1f5f9; padding-bottom: 8px; color: var(--text-sub); display: flex; align-items: center; gap: 8px; }
+        .chart-container { position: relative; height: 180px; width: 100%; }
+
+        /* POPUP */
+        .popup-header { font-weight: 700; border-bottom: 1px solid #eee; padding-bottom: 5px; margin-bottom: 8px; color: #334155; }
+        .popup-row { display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 0.9rem; }
+        .badge { padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 0.8rem; color: white; }
+        .bg-red { background: #dc2626; } .bg-green { background: #16a34a; }
+
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1><i class="fa-solid fa-mountain-sun" style="color: var(--col-rain);"></i> SENTINEL</h1>
+        <div style="background:#eff6ff; color:#1d4ed8; padding:6px 12px; border-radius:6px; font-weight:600; font-size:0.9rem;">
+            SYSTEM ACTIVE
+        </div>
+    </header>
+
+    <div class="map-section">
+        <div id="map"></div>
+        <div style="text-align: center; margin-top: 10px; color: #64748b; font-size: 0.9rem;">
+            <i class="fa-solid fa-info-circle"></i> Click the <b style="color:#2563eb">Blue Node</b> for Telemetry. Use <b>Layers Icon</b> (Top Right) to change view.
+        </div>
+    </div>
+
+    <div id="sensor-dashboard">
+        <h3 style="color: #334155; margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+            <i class="fa-solid fa-server"></i> LIVE TELEMETRY
+        </h3>
+
+        <div class="kpi-grid">
+            <div class="kpi-card" style="border-color: var(--col-temp);">
+                <div class="kpi-label">Temp</div><div class="kpi-value" id="val-temp" style="color: var(--col-temp);">--°C</div>
+            </div>
+            <div class="kpi-card" style="border-color: var(--col-humid);">
+                <div class="kpi-label">Humidity</div><div class="kpi-value" id="val-humid" style="color: var(--col-humid);">--%</div>
+            </div>
+            <div class="kpi-card" style="border-color: var(--col-rain);">
+                <div class="kpi-label">Rain</div><div class="kpi-value" id="val-rain" style="color: var(--col-rain);">--</div>
+            </div>
+            <div class="kpi-card" style="border-color: var(--col-vib);">
+                <div class="kpi-label">Vibration</div><div class="kpi-value" id="val-vib" style="color: var(--col-vib);">--</div>
+            </div>
+            <div class="kpi-card" style="border-color: var(--col-risk);">
+                <div class="kpi-label">Risk</div><div class="kpi-value" id="val-risk" style="color: var(--col-risk);">--%</div>
+            </div>
+        </div>
+
+        <div class="charts-grid">
+            <div class="panel"><div class="panel-header"><i class="fa-solid fa-triangle-exclamation"></i> Risk Trend</div><div class="chart-container"><canvas id="riskChart"></canvas></div></div>
+            <div class="panel"><div class="panel-header"><i class="fa-solid fa-temperature-half"></i> Temperature</div><div class="chart-container"><canvas id="tempChart"></canvas></div></div>
+            <div class="panel"><div class="panel-header"><i class="fa-solid fa-droplet"></i> Humidity</div><div class="chart-container"><canvas id="humidChart"></canvas></div></div>
+            <div class="panel"><div class="panel-header"><i class="fa-solid fa-cloud-showers-heavy"></i> Rain Events</div><div class="chart-container"><canvas id="rainChart"></canvas></div></div>
+            <div class="panel"><div class="panel-header"><i class="fa-solid fa-bolt"></i> Motion Triggers</div><div class="chart-container"><canvas id="vibDigitalChart"></canvas></div></div>
+            <div class="panel"><div class="panel-header"><i class="fa-solid fa-wave-square"></i> Seismic Force</div><div class="chart-container"><canvas id="vibAnalogChart"></canvas></div></div>
+        </div>
+    </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+    const socket = io();
+
+    // --- MAP SETUP ---
+    const streets = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' });
+    const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { attribution: 'Tiles © Esri' });
+    const terrain = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 17, attribution: '© OpenStreetMap' });
+
+    const map = L.map('map', { center: [20.59, 78.96], zoom: 5, layers: [satellite] });
+    L.control.layers({ "Satellite": satellite, "Terrain": terrain, "Street": streets }).addTo(map);
+
+    const sensorIcon = L.divIcon({ className: 'custom-icon', html: "<div style='background-color:#2563eb; width:20px; height:20px; border-radius:50%; border:3px solid white; box-shadow:0 0 15px rgba(37,99,235,0.9); cursor:pointer;'></div>", iconSize: [20,20], iconAnchor: [10,10] });
+    const analysisIcon = L.divIcon({ className: 'custom-icon', html: "<div style='background-color:#dc2626; width:14px; height:14px; border-radius:50%; border:2px solid white;'></div>", iconSize: [14,14], iconAnchor: [7,7] });
+
+    const sensorMarker = L.marker([0,0], {icon: sensorIcon}).addTo(map);
+    let analysisMarker;
+    let firstFix = true;
+
+    // --- CHART CONFIG ---
+    Chart.defaults.font.family = "'Inter', sans-serif"; Chart.defaults.color = '#64748b';
+    const commonOpts = { responsive: true, maintainAspectRatio: false, elements:{point:{radius:0}}, plugins:{legend:{display:false}}, scales:{x:{display:false}, y:{grid:{color:'#f1f5f9'}}} };
+
+    const riskChart = new Chart(document.getElementById('riskChart'), { type: 'line', data: { labels: [], datasets: [{ borderColor: '#dc2626', backgroundColor:'rgba(220,38,38,0.1)', borderWidth:2, fill:true, data:[] }] }, options: {...commonOpts, scales:{y:{min:0, max:100}}} });
+    const tempChart = new Chart(document.getElementById('tempChart'), { type: 'line', data: { labels: [], datasets: [{ borderColor: '#0284c7', borderWidth:2, tension:0.3, data:[] }] }, options: commonOpts });
+    const humidChart = new Chart(document.getElementById('humidChart'), { type: 'line', data: { labels: [], datasets: [{ borderColor: '#7c3aed', borderWidth:2, tension:0.3, data:[] }] }, options: commonOpts });
+    const rainChart = new Chart(document.getElementById('rainChart'), { type: 'line', data: { labels: [], datasets: [{ borderColor: '#2563eb', backgroundColor:'rgba(37,99,235,0.1)', borderWidth:2, stepped:true, fill:true, data:[] }] }, options: {...commonOpts, scales:{y:{min:-0.2, max:1.2, ticks:{display:false}}}} });
+    const vibDigChart = new Chart(document.getElementById('vibDigitalChart'), { type: 'line', data: { labels: [], datasets: [{ borderColor: '#d97706', backgroundColor:'rgba(217,119,6,0.1)', borderWidth:2, stepped:true, fill:true, data:[] }] }, options: {...commonOpts, scales:{y:{min:-0.2, max:1.2, ticks:{display:false}}}} });
+    const vibAnaChart = new Chart(document.getElementById('vibAnalogChart'), { type: 'line', data: { labels: [], datasets: [{ borderColor: '#dc2626', borderWidth:1, data:[] }, { borderColor: '#16a34a', borderWidth:1, data:[] }, { borderColor: '#2563eb', borderWidth:1, data:[] }] }, options: commonOpts });
+
+    // --- LOGIC ---
+    sensorMarker.on('click', (e) => {
+        L.DomEvent.stopPropagation(e);
+        if(analysisMarker) map.removeLayer(analysisMarker);
+        document.getElementById('sensor-dashboard').classList.add('active');
+        document.getElementById('sensor-dashboard').scrollIntoView({ behavior: 'smooth' });
+    });
+
+    map.on('click', (e) => {
+        document.getElementById('sensor-dashboard').classList.remove('active');
+        if(analysisMarker) map.removeLayer(analysisMarker);
+        analysisMarker = L.marker(e.latlng, {icon: analysisIcon}).addTo(map).bindPopup("<b>No Sensor Here</b><br>Only Risk Analysis available.").openPopup();
+    });
+
+    // --- SOCKET IO UPDATE ---
+    socket.on('sensor_update', (data) => {
+        const time = new Date().toLocaleTimeString();
+
+        // Update Map Marker
+        if (data.base_lat && data.base_lat !== 0) {
+            const pos = [data.base_lat, data.base_lng];
+            sensorMarker.setLatLng(pos);
+            if (firstFix) { map.setView(pos, 13); firstFix = false; }
+        }
+
+        // Update DOM
+        document.getElementById('val-temp').innerText = data.temp.toFixed(1)+"°C";
+        document.getElementById('val-humid').innerText = data.humid.toFixed(1)+"%";
+        document.getElementById('val-vib').innerText = data.vib?"MOTION":"STABLE";
+        document.getElementById('val-rain').innerText = data.rain===0?"YES":"NO";
+        document.getElementById('val-risk').innerText = (data.landslide_risk||0)+"%";
+
+        // Update Charts
+        const push = (c, vals) => {
+            if(c.data.labels.length > 30) { c.data.labels.shift(); c.data.datasets.forEach(d=>d.data.shift()); }
+            c.data.labels.push(time);
+            vals.forEach((val, i) => c.data.datasets[i].data.push(val));
+            c.update('none');
+        }
+        push(riskChart, [data.landslide_risk||0]); 
+        push(tempChart, [data.temp]); 
+        push(humidChart, [data.humid]);
+        // Rain is 0=Wet, 1=Dry. Graph needs 1=Wet.
+        push(rainChart, [data.rain===0 ? 1 : 0]); 
+        push(vibDigChart, [data.vib]);
+        push(vibAnaChart, [data.accel_x, data.accel_y, data.accel_z]);
+    });
+</script>
+
+</body>
+</html>
