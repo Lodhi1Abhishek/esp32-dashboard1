@@ -5,9 +5,10 @@ import joblib
 import requests
 import eventlet
 from datetime import datetime, timedelta
+import os
 
 # Initialize App
-app = Flask(__name__)
+app = Flask(__name__, template_folder='templates')
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 # 1. LOAD AI MODEL
@@ -34,7 +35,7 @@ def get_ai_features(lat, lon):
         r_elev = requests.get(url_elev, params={'latitude': [lat, lat+0.001], 'longitude': [lon, lon]}).json()
         elevs = r_elev.get('elevation', [0, 0])
         elevation = elevs[0]
-        slope = abs(elevs[0] - elevs[1]) * 100 # Proxy for slope
+        slope = abs(elevs[0] - elevs[1]) * 100 
 
         # C. SOIL (ISRIC)
         url_soil = "https://rest.isric.org/soilgrids/v2.0/properties/query"
@@ -42,17 +43,14 @@ def get_ai_features(lat, lon):
         r_soil = requests.get(url_soil, params=params_soil).json()
         vals = {l['name']: l['depths'][0]['values']['mean']/10.0 for l in r_soil['properties']['layers']}
 
-        # Prepare DataFrame for Model
-        features = pd.DataFrame([{
+        return {
             'rain_7day': rain_7day, 
             'elevation': elevation, 
             'slope': slope,
             'sand': vals.get('sand', 30), 
             'silt': vals.get('silt', 30), 
             'clay': vals.get('clay', 30)
-        }])
-        
-        return features
+        }
     except Exception as e:
         print(f"API Error: {e}")
         return None
@@ -66,23 +64,38 @@ def index():
 @app.route('/api/data', methods=['POST'])
 def receive_data():
     data = request.json
-    print(f"📡 Received from ESP32: {data}")
+    print(f"📡 Received: {data}")
 
-    # 1. Process AI Prediction if GPS is valid
-    ai_risk = 0
+    # Process AI Prediction if GPS is valid
     if model and data.get('base_lat', 0) != 0:
-        features = get_ai_features(data['base_lat'], data['base_lng'])
-        if features is not None:
+        feats = get_ai_features(data['base_lat'], data['base_lng'])
+        if feats:
+            # Convert dict to DataFrame for model
+            df = pd.DataFrame([feats])
             # Predict Probability (0 to 1) -> Convert to %
-            ai_risk = int(model.predict_proba(features)[0][1] * 100)
+            risk = int(model.predict_proba(df)[0][1] * 100)
+            data['landslide_risk'] = risk
     
-    # 2. Add Risk to Data Packet
-    data['landslide_risk'] = ai_risk
-    
-    # 3. Send to Dashboard via WebSocket
+    # Send to Dashboard
     socketio.emit('sensor_update', data)
-    
     return "Data Received", 200
 
+# --- ROUTE 3: AI Analysis Endpoint (For Map Clicks) ---
+@app.route('/api/check-location', methods=['POST'])
+def check_location():
+    data = request.json
+    lat, lon = data.get('lat'), data.get('lon')
+    
+    if not model: return jsonify({"error": "AI Model Offline"}), 500
+
+    feats = get_ai_features(lat, lon)
+    if feats:
+        df = pd.DataFrame([feats])
+        risk = int(model.predict_proba(df)[0][1] * 100)
+        return jsonify({"risk_score": risk, "features": feats})
+    
+    return jsonify({"error": "Analysis Failed"}), 500
+
 if __name__ == '__main__':
-    socketio.run(app, host='0.0.0.0', port=5000)
+    port = int(os.environ.get('PORT', 10000))
+    socketio.run(app, host='0.0.0.0', port=port)
